@@ -45,11 +45,26 @@ namespace TheTower.Game
         public int UpgradeCashBonus { get; set; } = 0;
         public int UpgradeCashPerWave { get; set; } = 0;
 
+        /// <summary> 월드 전체 스케일 (1/5) </summary>
+        public const float WorldScale = 0.2f;
+
+        /// <summary> 타워(캐릭터) 기본 소환 위치 (Y축 0.5 올림) </summary>
+        public static readonly Vector3 TowerSpawnPosition = new Vector3(0f, 0.5f, 0f);
+
+        /// <summary> 타워 공격 사거리 (기본 5 + 업그레이드, 스케일 적용) </summary>
+        public float TowerRange => (5f + UpgradeRange * 0.4f) * WorldScale;
+
+        /// <summary> 자료: 공격속도 99 max = 발사 속도. 초당 발사 횟수(APS), 레벨당 +4%. </summary>
+        public float TowerAttacksPerSecond => 2f * (1f + UpgradeAttackSpeed * 0.04f);
+
+        /// <summary> 자료 기반 발사 주기(초). TowerAttacksPerSecond 역수. </summary>
+        public float TowerAttackInterval => 1f / Mathf.Max(0.05f, TowerAttacksPerSecond);
+
         public static void ResetForNewRun()
         {
             Instance = new BattleState
             {
-                Cash = 100,
+                Cash = 0,
                 Wave = 1,
                 TowerHealth = 100,
                 TowerMaxHealth = 100,
