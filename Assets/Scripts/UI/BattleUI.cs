@@ -13,14 +13,24 @@ namespace TheTower.UI
     [RequireComponent(typeof(Canvas))]
     public class BattleUI : MonoBehaviour
     {
+        #region Serialized
+
         [Header("Optional: Lobby scene name")]
         [SerializeField] string lobbySceneName = "Lobby";
+
+        [Header("업그레이드 아이템 프리팹 (선택)")]
+        [Tooltip("지정 시 각 탭의 업그레이드 항목을 이 프리팹으로 생성. Assets/Prefab/UPGRADESITEM 등")]
+        [SerializeField] GameObject upgradeItemPrefab;
 
         [Header("Canvas Scaler (씬에 이미 있으면 덮어쓰지 않음)")]
         [Tooltip("안드로이드 세로: 1080x1920. 가로 게임이면 1920x1080")]
         [SerializeField] Vector2 referenceResolution = new Vector2(1080, 1920);
         [Tooltip("세로 화면: 0.5 또는 1 권장. 0=가로 기준, 1=세로 기준")]
         [SerializeField] [Range(0f, 1f)] float matchWidthOrHeight = 0.5f;
+
+        #endregion
+
+        #region UI References
 
         Text cashText;
         Text coinsText;
@@ -65,11 +75,21 @@ namespace TheTower.UI
 
         Image healthBarFill;
 
+        #endregion
+
+        #region Constants
+
         static readonly Color PanelBg = new Color(0.2f, 0.16f, 0.35f, 0.95f);
         static readonly Color TabActive = new Color(0.25f, 0.2f, 0.45f, 1f);
 
+        #endregion
+
+        #region Lifecycle
+
         void Awake()
         {
+            GameData.Load();
+
             BattleState.EnsureExists();
             BattleState.ResetForNewRun();
             Time.timeScale = BattleState.Instance.GameSpeed;
@@ -97,6 +117,8 @@ namespace TheTower.UI
                 go.AddComponent<TowerRangeIndicator>();
             }
         }
+
+        #endregion
 
         void OnDestroy()
         {
@@ -200,9 +222,9 @@ namespace TheTower.UI
                 var ac = upgradePanel.Find("AttackContent");
                 var dc = upgradePanel.Find("DefenseContent");
                 var uc = upgradePanel.Find("UtilityContent");
-                if (ac != null) { attackContent = ac.gameObject; var g = ac.Find("UpgradeGrid"); if (g != null) BindUpgradeGrid(g); }
-                if (dc != null) { defenseContent = dc.gameObject; defenseContent.SetActive(false); var g = dc.Find("UpgradeGrid"); if (g != null) BindUpgradeGrid(g); }
-                if (uc != null) { utilityContent = uc.gameObject; utilityContent.SetActive(false); var g = uc.Find("UpgradeGrid"); if (g != null) BindUpgradeGrid(g); }
+                if (ac != null) { attackContent = ac.gameObject; var g = FindUpgradeGrid(ac); if (g != null) { EnsureUpgradeGridComponents(g); if (g.childCount == 0) EnsureUpgradeItemsByTab(g, UpgradeItemInfo.Tab.Attack); BindUpgradeGrid(g); } }
+                if (dc != null) { defenseContent = dc.gameObject; defenseContent.SetActive(false); var g = FindUpgradeGrid(dc); if (g != null) { EnsureUpgradeGridComponents(g); if (g.childCount == 0) EnsureUpgradeItemsByTab(g, UpgradeItemInfo.Tab.Defense); BindUpgradeGrid(g); } }
+                if (uc != null) { utilityContent = uc.gameObject; utilityContent.SetActive(false); var g = FindUpgradeGrid(uc); if (g != null) { EnsureUpgradeGridComponents(g); if (g.childCount == 0) EnsureUpgradeItemsByTab(g, UpgradeItemInfo.Tab.Utility); BindUpgradeGrid(g); } }
             }
         }
 
@@ -227,105 +249,146 @@ namespace TheTower.UI
             {
                 var acGo = CreateContentPanel(upgradePanel, "AttackContent");
                 attackContent = acGo;
-                var ag = AddGridToContent(attackContent.transform);
-                EnsureDefaultUpgradeItems(ag.transform);
+                var ag = CreateScrollViewWithUpgradeGrid(attackContent.transform);
+                EnsureUpgradeItemsByTab(ag.transform, UpgradeItemInfo.Tab.Attack);
+                BindUpgradeGrid(ag.transform);
             }
             if (upgradePanel.Find("DefenseContent") == null)
             {
                 defenseContent = CreateContentPanel(upgradePanel, "DefenseContent").gameObject;
                 defenseContent.SetActive(false);
-                var dg = AddGridToContent(defenseContent.transform);
-                EnsureDefenseUpgradeItems(dg.transform);
+                var dg = CreateScrollViewWithUpgradeGrid(defenseContent.transform);
+                EnsureUpgradeItemsByTab(dg.transform, UpgradeItemInfo.Tab.Defense);
+                BindUpgradeGrid(dg.transform);
             }
             if (upgradePanel.Find("UtilityContent") == null)
             {
                 utilityContent = CreateContentPanel(upgradePanel, "UtilityContent").gameObject;
                 utilityContent.SetActive(false);
-                var ug = AddGridToContent(utilityContent.transform);
-                EnsureUtilityUpgradeItems(ug.transform);
+                var ug = CreateScrollViewWithUpgradeGrid(utilityContent.transform);
+                EnsureUpgradeItemsByTab(ug.transform, UpgradeItemInfo.Tab.Utility);
+                BindUpgradeGrid(ug.transform);
             }
         }
 
-        /// <summary> UpgradeGrid가 비어 있으면 처음부터 데미지·공격속도 두 항목을 생성. </summary>
-        void EnsureDefaultUpgradeItems(Transform upgradeGrid)
+        /// <summary> Scroll View > Viewport > UpgradeGrid 경로 또는 직접 UpgradeGrid 찾기. </summary>
+        static Transform FindUpgradeGrid(Transform tabContent)
         {
+            if (tabContent == null) return null;
+            var scrollView = tabContent.Find("Scroll View");
+            if (scrollView != null)
+            {
+                var viewport = scrollView.Find("Viewport");
+                if (viewport != null)
+                {
+                    var grid = viewport.Find("UpgradeGrid");
+                    if (grid != null) return grid;
+                }
+            }
+            return tabContent.Find("UpgradeGrid");
+        }
+
+        /// <summary> 이미지 사양: Content Size Fitter(Vertical=Preferred), Grid Layout(345x119, Spacing 10, Upper Left). </summary>
+        static void EnsureUpgradeGridComponents(Transform upgradeGrid)
+        {
+            if (upgradeGrid == null || upgradeGrid.gameObject == null) return;
+            var rect = upgradeGrid.GetComponent<RectTransform>();
+            if (rect == null) rect = upgradeGrid.gameObject.AddComponent<RectTransform>();
+            if (rect == null) return;
+            rect.anchorMin = new Vector2(0, 1);
+            rect.anchorMax = new Vector2(1, 1);
+            rect.pivot = new Vector2(0, 1);
+            rect.offsetMin = new Vector2(0, 0);
+            rect.offsetMax = new Vector2(0, 0);
+            rect.anchoredPosition = Vector2.zero;
+
+            var csf = upgradeGrid.GetComponent<ContentSizeFitter>();
+            if (csf == null) csf = upgradeGrid.gameObject.AddComponent<ContentSizeFitter>();
+            csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var glg = upgradeGrid.GetComponent<GridLayoutGroup>();
+            if (glg == null) glg = upgradeGrid.gameObject.AddComponent<GridLayoutGroup>();
+            glg.padding = new RectOffset(0, 0, 0, 0);
+            glg.cellSize = new Vector2(345f, 119f);
+            glg.spacing = new Vector2(10f, 10f);
+            glg.startCorner = GridLayoutGroup.Corner.UpperLeft;
+            glg.startAxis = GridLayoutGroup.Axis.Horizontal;
+            glg.childAlignment = TextAnchor.UpperLeft;
+            glg.constraint = GridLayoutGroup.Constraint.Flexible;
+        }
+
+        /// <summary> UpgradeItemInfo와 동일한 목록으로 탭별 업그레이드 아이템 생성. 로비 워크샵과 동일 항목·순서. </summary>
+        void EnsureUpgradeItemsByTab(Transform upgradeGrid, UpgradeItemInfo.Tab tab)
+        {
+            if (upgradeGrid == null || upgradeGrid.gameObject == null) return;
             if (upgradeGrid.childCount > 0) return;
 
             var s = BattleState.Instance;
-            int dCost = s != null ? UpgradeConfig.GetDamageCost(s.UpgradeDamage) : 10;
-            int aCost = s != null ? UpgradeConfig.GetAttackSpeedCost(s.UpgradeAttackSpeed) : 5;
-
-            // 데미지 항목
-            var item1 = new GameObject("UPGRADESITEM");
-            item1.transform.SetParent(upgradeGrid, false);
-            var r1 = item1.AddComponent<RectTransform>();
-            r1.sizeDelta = new Vector2(280, 48);
-            AddLabel(item1.transform, UpgradeConfig.Damage, 18, 0, 0.5f, 5, 0, 70, 22);
-            AddLabel(item1.transform, s != null ? s.Damage.ToString("F0") : "10", 18, 0.25f, 0.5f, 0, 0, 50, 22);
-            AddLabel(item1.transform, "$" + dCost, 16, 0.45f, 0.5f, 0, 0, 50, 20);
-            var btn1 = CreateButton(item1.transform, "BuyDamage", "$", 16);
-            SetRect(btn1.GetComponent<RectTransform>(), 0.85f, 0.5f, 0, 0, 44, 36);
-
-            // 공격속도 항목
-            var item2 = new GameObject("UPGRADESITEM");
-            item2.transform.SetParent(upgradeGrid, false);
-            var r2 = item2.AddComponent<RectTransform>();
-            r2.sizeDelta = new Vector2(280, 48);
-            AddLabel(item2.transform, UpgradeConfig.AttackSpeed, 18, 0, 0.5f, 5, 0, 80, 22);
-            AddLabel(item2.transform, s != null ? s.TowerAttacksPerSecond.ToString("F2") : "2.00", 18, 0.3f, 0.5f, 0, 0, 50, 22);
-            AddLabel(item2.transform, "$" + aCost, 16, 0.5f, 0.5f, 0, 0, 50, 20);
-            var btn2 = CreateButton(item2.transform, "BuyAttackSpeed", "$", 16);
-            SetRect(btn2.GetComponent<RectTransform>(), 0.85f, 0.5f, 0, 0, 44, 36);
+            foreach (var entry in UpgradeItemInfo.GetByTab(tab))
+            {
+                int level = s != null ? s.GetUpgradeLevel(entry.Id) : 0;
+                int cost = UpgradeConfig.GetCostForUpgrade(entry.Id, level);
+                string valueStr = GetBattleUpgradeValueString(entry.Id, level);
+                string costStr = "$" + cost;
+                if (upgradeItemPrefab != null)
+                    CreateUpgradeItemFromPrefab(upgradeGrid, entry.DisplayName, valueStr, costStr, entry.ButtonName);
+                else
+                    CreateUpgradeItemCode(upgradeGrid, entry.DisplayName, valueStr, costStr, entry.ButtonName);
+            }
         }
 
-        void EnsureDefenseUpgradeItems(Transform grid)
+        /// <summary> 배틀용 업그레이드 현재값 문자열. 구현된 항목은 실제 수치, 나머지는 Lv N. </summary>
+        static string GetBattleUpgradeValueString(string upgradeId, int level)
         {
             var s = BattleState.Instance;
-            var item1 = new GameObject("UPGRADESITEM");
-            item1.transform.SetParent(grid, false);
-            item1.AddComponent<RectTransform>().sizeDelta = new Vector2(280, 48);
-            AddLabel(item1.transform, UpgradeConfig.Health, 18, 0, 0.5f, 5, 0, 70, 22);
-            AddLabel(item1.transform, s != null ? s.TowerMaxHealth.ToString("F0") : "100", 18, 0.25f, 0.5f, 0, 0, 50, 22);
-            AddLabel(item1.transform, "$" + (s != null ? UpgradeConfig.GetHealthCost(s.UpgradeHealth) : 10), 16, 0.45f, 0.5f, 0, 0, 50, 20);
-            var b1 = CreateButton(item1.transform, "BuyHealth", "$", 16);
-            SetRect(b1.GetComponent<RectTransform>(), 0.85f, 0.5f, 0, 0, 44, 36);
-            var item2 = new GameObject("UPGRADESITEM");
-            item2.transform.SetParent(grid, false);
-            item2.AddComponent<RectTransform>().sizeDelta = new Vector2(280, 48);
-            AddLabel(item2.transform, UpgradeConfig.HealthRegen, 18, 0, 0.5f, 5, 0, 80, 22);
-            AddLabel(item2.transform, s != null ? s.HealthRegenPerSec.ToString("F2") + "/s" : "1.00/s", 18, 0.3f, 0.5f, 0, 0, 60, 22);
-            AddLabel(item2.transform, "$" + (s != null ? UpgradeConfig.GetHealthRegenCost(s.UpgradeHealthRegen) : 5), 16, 0.5f, 0.5f, 0, 0, 50, 20);
-            var b2 = CreateButton(item2.transform, "BuyRegen", "$", 16);
-            SetRect(b2.GetComponent<RectTransform>(), 0.85f, 0.5f, 0, 0, 44, 36);
-            var item3 = new GameObject("UPGRADESITEM");
-            item3.transform.SetParent(grid, false);
-            item3.AddComponent<RectTransform>().sizeDelta = new Vector2(280, 48);
-            AddLabel(item3.transform, UpgradeConfig.DefensePercent, 18, 0, 0.5f, 5, 0, 80, 22);
-            AddLabel(item3.transform, s != null ? (s.UpgradeDefensePercent * 0.5f).ToString("F1") + "%" : "0%", 18, 0.3f, 0.5f, 0, 0, 50, 22);
-            AddLabel(item3.transform, "$" + (s != null ? UpgradeConfig.GetDefensePercentCost(s.UpgradeDefensePercent) : 6), 16, 0.5f, 0.5f, 0, 0, 50, 20);
-            var b3 = CreateButton(item3.transform, "BuyDefense", "$", 16);
-            SetRect(b3.GetComponent<RectTransform>(), 0.85f, 0.5f, 0, 0, 44, 36);
+            if (s == null) return "Lv " + level;
+            switch (upgradeId.ToUpperInvariant())
+            {
+                case "DAMAGE": return s.Damage.ToString("F0");
+                case "ATTACKSPEED": return s.TowerAttacksPerSecond.ToString("F2");
+                case "CRITICALCHANCE": return (s.UpgradeCriticalChance * 0.5f).ToString("F1") + "%";
+                case "RANGE": return s.TowerRange.ToString("F1");
+                case "HEALTH": return s.TowerMaxHealth.ToString("F0");
+                case "REGEN": return s.HealthRegenPerSec.ToString("F2") + "/s";
+                case "DEFENSE": return (s.UpgradeDefensePercent * 0.5f).ToString("F1") + "%";
+                case "CASHBONUS": return "x" + (1f + s.UpgradeCashBonus * 0.05f).ToString("F2");
+                case "CASHPERWAVE": return "+" + (5 + s.UpgradeCashPerWave * 2);
+                default: return "Lv " + level;
+            }
         }
 
-        void EnsureUtilityUpgradeItems(Transform grid)
+        /// <summary> 프리팹 없을 때 업그레이드 행 1개 코드 생성. Grid Layout 셀 크기(345x119)에 맞춤. </summary>
+        void CreateUpgradeItemCode(Transform parent, string displayName, string valueStr, string costStr, string buttonName)
         {
-            var s = BattleState.Instance;
-            var item1 = new GameObject("UPGRADESITEM");
-            item1.transform.SetParent(grid, false);
-            item1.AddComponent<RectTransform>().sizeDelta = new Vector2(280, 48);
-            AddLabel(item1.transform, UpgradeConfig.CashBonus, 18, 0, 0.5f, 5, 0, 90, 22);
-            AddLabel(item1.transform, s != null ? "x" + (1f + s.UpgradeCashBonus * 0.05f).ToString("F2") : "x1.00", 18, 0.3f, 0.5f, 0, 0, 50, 22);
-            AddLabel(item1.transform, "$" + (s != null ? UpgradeConfig.GetCashBonusCost(s.UpgradeCashBonus) : 4), 16, 0.5f, 0.5f, 0, 0, 50, 20);
-            var b1 = CreateButton(item1.transform, "BuyCashBonus", "$", 16);
-            SetRect(b1.GetComponent<RectTransform>(), 0.85f, 0.5f, 0, 0, 44, 36);
-            var item2 = new GameObject("UPGRADESITEM");
-            item2.transform.SetParent(grid, false);
-            item2.AddComponent<RectTransform>().sizeDelta = new Vector2(280, 48);
-            AddLabel(item2.transform, UpgradeConfig.CashPerWave, 18, 0, 0.5f, 5, 0, 90, 22);
-            AddLabel(item2.transform, s != null ? "+" + (5 + s.UpgradeCashPerWave * 2) : "+5", 18, 0.3f, 0.5f, 0, 0, 50, 22);
-            AddLabel(item2.transform, "$" + (s != null ? UpgradeConfig.GetCashPerWaveCost(s.UpgradeCashPerWave) : 5), 16, 0.5f, 0.5f, 0, 0, 50, 20);
-            var b2 = CreateButton(item2.transform, "BuyCashPerWave", "$", 16);
-            SetRect(b2.GetComponent<RectTransform>(), 0.85f, 0.5f, 0, 0, 44, 36);
+            if (parent == null || parent.gameObject == null) return;
+            const float cellW = 345f, cellH = 119f;
+            var item = new GameObject("UPGRADESITEM");
+            item.transform.SetParent(parent, false);
+            item.AddComponent<RectTransform>().sizeDelta = new Vector2(cellW, cellH);
+            AddLabel(item.transform, displayName, 18, 0, 0.5f, 8, 0, 140, 24);
+            AddLabel(item.transform, valueStr, 18, 0.4f, 0.5f, 0, 0, 80, 24);
+            AddLabel(item.transform, costStr, 16, 0.7f, 0.5f, 0, 0, 60, 22);
+            var btn = CreateButton(item.transform, buttonName, "$", 16);
+            SetRect(btn.GetComponent<RectTransform>(), 0.92f, 0.5f, 0, 0, 44, 40);
+        }
+
+        /// <summary> 프리팹에서 업그레이드 아이템 1개 생성. 텍스트 3개(이름/값/비용) + 버튼 이름 설정. BindUpgradeGrid에서 버튼 이름으로 타입 인식. </summary>
+        GameObject CreateUpgradeItemFromPrefab(Transform parent, string displayName, string valueStr, string costStr, string buttonName)
+        {
+            if (upgradeItemPrefab == null || parent == null) return null;
+            var go = Instantiate(upgradeItemPrefab, parent, false);
+            go.name = "UPGRADESITEM";
+            var texts = go.GetComponentsInChildren<Text>(true);
+            if (texts != null && texts.Length >= 3)
+            {
+                texts[0].text = displayName;
+                texts[1].text = valueStr;
+                texts[2].text = costStr;
+            }
+            var btn = go.GetComponentInChildren<Button>(true);
+            if (btn != null) btn.name = buttonName;
+            return go;
         }
 
         void BindTopBar(Transform topBar)
@@ -377,7 +440,7 @@ namespace TheTower.UI
 
                 string btnName = btn.name.ToUpperInvariant();
                 if (labels.Length > 0)
-                    labels[0].text = UpgradeConfig.GetDisplayName(btn.name);
+                    labels[0].text = UpgradeItemInfo.TryGetByButtonName(btn.name, out var entry) ? entry.DisplayName : UpgradeConfig.GetDisplayName(btn.name);
                 if (btnName.Contains("DAMAGE") && !btnName.Contains("ATTACKSPEED"))
                 {
                     damageValueText = labels[1];
@@ -567,61 +630,25 @@ namespace TheTower.UI
             SetRect(tabUtility.GetComponent<RectTransform>(), 0, 0.5f, 170, 0, 70, 36);
             tabUtility.GetComponent<Button>().onClick.AddListener(() => OnTab(2));
 
-            // 공격 탭 콘텐츠
+            // 공격 탭 콘텐츠: Scroll View > Viewport > UpgradeGrid (이미지 사양)
             attackContent = CreateContentPanel(panel.transform, "AttackContent");
-            var attackGrid = AddGridToContent(attackContent.transform);
-            AddLabel(attackGrid.transform, UpgradeConfig.Damage, 20, 0, 1, 10, -10, 120, 28);
-            damageValueText = AddLabel(attackGrid.transform, "10", 20, 0, 1, 10, -42, 100, 24);
-            damageCostText = AddLabel(attackGrid.transform, "$10", 18, 0, 1, 10, -68, 80, 22);
-            damageBuyButton = CreateButton(attackGrid.transform, "BuyDamage", "$", 18).GetComponent<Button>();
-            SetRect(damageBuyButton.GetComponent<RectTransform>(), 0, 1, 100, -38, 60, 50);
-            damageBuyButton.onClick.AddListener(OnBuyDamage);
-            AddLabel(attackGrid.transform, UpgradeConfig.AttackSpeed, 20, 0.33f, 1, 10, -100, 140, 28);
-            attackSpeedValueText = AddLabel(attackGrid.transform, "2.00", 20, 0.33f, 1, 10, -132, 80, 24);
-            attackSpeedCostText = AddLabel(attackGrid.transform, "$5", 18, 0.33f, 1, 10, -158, 60, 22);
-            attackSpeedBuyButton = CreateButton(attackGrid.transform, "BuyAttackSpeed", "$", 18).GetComponent<Button>();
-            SetRect(attackSpeedBuyButton.GetComponent<RectTransform>(), 0.33f, 1, 100, -128, 60, 50);
-            attackSpeedBuyButton.onClick.AddListener(OnBuyAttackSpeed);
+            var attackGrid = CreateScrollViewWithUpgradeGrid(attackContent.transform);
+            EnsureUpgradeItemsByTab(attackGrid.transform, UpgradeItemInfo.Tab.Attack);
+            BindUpgradeGrid(attackGrid.transform);
 
             // 방어 탭 콘텐츠
             defenseContent = CreateContentPanel(panel.transform, "DefenseContent");
             defenseContent.SetActive(false);
-            var defenseGrid = AddGridToContent(defenseContent.transform);
-            AddLabel(defenseGrid.transform, UpgradeConfig.Health, 20, 0, 1, 10, -10, 80, 28);
-            healthValueText = AddLabel(defenseGrid.transform, "100", 20, 0, 1, 10, -42, 80, 24);
-            healthCostText = AddLabel(defenseGrid.transform, "$10", 18, 0, 1, 10, -68, 60, 22);
-            healthBuyButton = CreateButton(defenseGrid.transform, "BuyHealth", "$", 18).GetComponent<Button>();
-            SetRect(healthBuyButton.GetComponent<RectTransform>(), 0, 1, 100, -38, 60, 50);
-            healthBuyButton.onClick.AddListener(OnBuyHealth);
-            AddLabel(defenseGrid.transform, UpgradeConfig.HealthRegen, 20, 0.33f, 1, 10, -100, 100, 28);
-            regenValueText = AddLabel(defenseGrid.transform, "1.00/s", 20, 0.33f, 1, 10, -132, 80, 24);
-            regenCostText = AddLabel(defenseGrid.transform, "$5", 18, 0.33f, 1, 10, -158, 60, 22);
-            regenBuyButton = CreateButton(defenseGrid.transform, "BuyRegen", "$", 18).GetComponent<Button>();
-            SetRect(regenBuyButton.GetComponent<RectTransform>(), 0.33f, 1, 100, -128, 60, 50);
-            regenBuyButton.onClick.AddListener(OnBuyHealthRegen);
-            AddLabel(defenseGrid.transform, UpgradeConfig.DefensePercent, 20, 0.66f, 1, 10, -190, 80, 28);
-            defenseValueText = AddLabel(defenseGrid.transform, "0%", 20, 0.66f, 1, 10, -222, 60, 24);
-            defenseCostText = AddLabel(defenseGrid.transform, "$6", 18, 0.66f, 1, 10, -248, 50, 22);
-            defenseBuyButton = CreateButton(defenseGrid.transform, "BuyDefense", "$", 18).GetComponent<Button>();
-            SetRect(defenseBuyButton.GetComponent<RectTransform>(), 0.66f, 1, 100, -218, 60, 50);
-            defenseBuyButton.onClick.AddListener(OnBuyDefensePercent);
+            var defenseGrid = CreateScrollViewWithUpgradeGrid(defenseContent.transform);
+            EnsureUpgradeItemsByTab(defenseGrid.transform, UpgradeItemInfo.Tab.Defense);
+            BindUpgradeGrid(defenseGrid.transform);
 
             // 유틸리티 탭 콘텐츠
             utilityContent = CreateContentPanel(panel.transform, "UtilityContent");
             utilityContent.SetActive(false);
-            var utilityGrid = AddGridToContent(utilityContent.transform);
-            AddLabel(utilityGrid.transform, UpgradeConfig.CashBonus, 20, 0, 1, 10, -10, 120, 28);
-            cashBonusValueText = AddLabel(utilityGrid.transform, "x1.0", 20, 0, 1, 10, -42, 80, 24);
-            cashBonusCostText = AddLabel(utilityGrid.transform, "$4", 18, 0, 1, 10, -68, 60, 22);
-            cashBonusBuyButton = CreateButton(utilityGrid.transform, "BuyCashBonus", "$", 18).GetComponent<Button>();
-            SetRect(cashBonusBuyButton.GetComponent<RectTransform>(), 0, 1, 100, -38, 60, 50);
-            cashBonusBuyButton.onClick.AddListener(OnBuyCashBonus);
-            AddLabel(utilityGrid.transform, UpgradeConfig.CashPerWave, 20, 0.33f, 1, 10, -100, 120, 28);
-            cashPerWaveValueText = AddLabel(utilityGrid.transform, "+5", 20, 0.33f, 1, 10, -132, 80, 24);
-            cashPerWaveCostText = AddLabel(utilityGrid.transform, "$5", 18, 0.33f, 1, 10, -158, 60, 22);
-            cashPerWaveBuyButton = CreateButton(utilityGrid.transform, "BuyCashPerWave", "$", 18).GetComponent<Button>();
-            SetRect(cashPerWaveBuyButton.GetComponent<RectTransform>(), 0.33f, 1, 100, -128, 60, 50);
-            cashPerWaveBuyButton.onClick.AddListener(OnBuyCashPerWave);
+            var utilityGrid = CreateScrollViewWithUpgradeGrid(utilityContent.transform);
+            EnsureUpgradeItemsByTab(utilityGrid.transform, UpgradeItemInfo.Tab.Utility);
+            BindUpgradeGrid(utilityGrid.transform);
         }
 
         GameObject CreateContentPanel(Transform panel, string name)
@@ -636,16 +663,62 @@ namespace TheTower.UI
             return go;
         }
 
+        /// <summary> Scroll View > Viewport > UpgradeGrid 구조 생성. content는 ScrollRect의 content(UpgradeGrid)로 사용. 이미지 사양 적용. </summary>
+        GameObject CreateScrollViewWithUpgradeGrid(Transform contentParent)
+        {
+            if (contentParent == null) return null;
+
+            var scrollViewGo = new GameObject("Scroll View");
+            scrollViewGo.transform.SetParent(contentParent, false);
+            var scrollViewR = scrollViewGo.GetComponent<RectTransform>() ?? scrollViewGo.AddComponent<RectTransform>();
+            scrollViewR.anchorMin = Vector2.zero;
+            scrollViewR.anchorMax = Vector2.one;
+            scrollViewR.offsetMin = Vector2.zero;
+            scrollViewR.offsetMax = Vector2.zero;
+
+            var scrollRect = scrollViewGo.AddComponent<ScrollRect>();
+            scrollRect.horizontal = false;
+            scrollRect.vertical = true;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+            scrollRect.elasticity = 0.1f;
+            scrollRect.inertia = true;
+            scrollRect.scrollSensitivity = 20f;
+
+            var viewportGo = new GameObject("Viewport");
+            viewportGo.transform.SetParent(scrollViewGo.transform, false);
+            var viewportR = viewportGo.GetComponent<RectTransform>();
+            if (viewportR == null) viewportR = viewportGo.AddComponent<RectTransform>();
+            viewportR.anchorMin = Vector2.zero;
+            viewportR.anchorMax = Vector2.one;
+            viewportR.offsetMin = Vector2.zero;
+            viewportR.offsetMax = Vector2.zero;
+            viewportGo.AddComponent<RectMask2D>();
+
+            var gridGo = new GameObject("UpgradeGrid");
+            gridGo.transform.SetParent(viewportGo.transform, false);
+            var gridRect = gridGo.GetComponent<RectTransform>();
+            if (gridRect == null) gridRect = gridGo.AddComponent<RectTransform>();
+            EnsureUpgradeGridComponents(gridGo.transform);
+
+            scrollRect.content = gridRect;
+            scrollRect.viewport = viewportR;
+
+            if (contentParent.parent != null)
+            {
+                var scrollbar = contentParent.parent.Find("Scroll View/Scrollbar Vertical");
+                if (scrollbar != null) scrollRect.verticalScrollbar = scrollbar.GetComponent<Scrollbar>();
+            }
+
+            return gridGo;
+        }
+
         GameObject AddGridToContent(Transform content)
         {
-            var grid = new GameObject("UpgradeGrid");
-            grid.transform.SetParent(content, false);
-            var gridR = grid.AddComponent<RectTransform>();
-            gridR.anchorMin = Vector2.zero;
-            gridR.anchorMax = Vector2.one;
-            gridR.offsetMin = new Vector2(10, 10);
-            gridR.offsetMax = new Vector2(-10, -10);
-            return grid;
+            var gridGo = new GameObject("UpgradeGrid");
+            gridGo.transform.SetParent(content, false);
+            gridGo.AddComponent<RectTransform>();
+            EnsureUpgradeGridComponents(gridGo.transform);
+            return gridGo;
         }
 
         void OnTab(int index)
@@ -693,8 +766,15 @@ namespace TheTower.UI
 
         void OnBack()
         {
-            if (!string.IsNullOrEmpty(lobbySceneName) && Application.CanStreamedLevelBeLoaded(lobbySceneName))
-                SceneManager.LoadScene(lobbySceneName);
+            if (string.IsNullOrEmpty(lobbySceneName) || !Application.CanStreamedLevelBeLoaded(lobbySceneName))
+                return;
+            GameData.Save();
+            SceneManager.LoadScene(lobbySceneName);
+        }
+
+        void OnApplicationQuit()
+        {
+            GameData.Save();
         }
 
         void OnSpeedDown()

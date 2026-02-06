@@ -7,14 +7,18 @@ namespace TheTower.Game
     /// </summary>
     public static class UpgradeConfig
     {
-        /// <summary> 자료: 공격 탭 표시명 </summary>
+        #region Tab Display Names
+
         public const string TabAttack = "공격 업그레이드";
         /// <summary> 자료: 방어 탭 표시명 </summary>
         public const string TabDefense = "방어 업그레이드";
         /// <summary> 자료: 유틸리티 탭 표시명 </summary>
         public const string TabUtility = "유틸리티 업그레이드";
 
-        // 자료 3.1 공격
+        #endregion
+
+        #region Upgrade Display Names (3.1~3.3)
+
         public const string Damage = "데미지";
         public const string AttackSpeed = "공격속도";
         public const string CriticalChance = "치명타율";
@@ -32,6 +36,13 @@ namespace TheTower.Game
         public const string CashPerWave = "현금/웨이브";
         public const string CoinPerKill = "동전/킬 보너스";
         public const string CoinPerWave = "동전/웨이브";
+
+        #endregion
+
+        #region Cost Formulas
+
+        private const int DefaultCostBase = 10;
+        private const int DefaultCostPerLevel = 5;
 
         /// <summary> 버튼/키 이름으로 표시명 반환 (씬 바인딩 시 제목 라벨용) </summary>
         public static string GetDisplayName(string buttonOrKey)
@@ -67,5 +78,25 @@ namespace TheTower.Game
         public static int GetCashBonusCost(int level) => 4 + level * 2;
         /// <summary> 자료 기반 비용: 현금/웨이브 </summary>
         public static int GetCashPerWaveCost(int level) => 5 + level * 2;
+
+        /// <summary> 업그레이드 ID별 코인 비용 (로비 워크샵용). 미정의 ID는 10 + 레벨×5. </summary>
+        public static int GetCostForUpgrade(string upgradeId, int level)
+        {
+            if (string.IsNullOrEmpty(upgradeId)) return 0;
+            switch (upgradeId.ToUpperInvariant())
+            {
+                case "DAMAGE": return GetDamageCost(level);
+                case "ATTACKSPEED": return GetAttackSpeedCost(level);
+                case "RANGE": return GetRangeCost(level);
+                case "HEALTH": return GetHealthCost(level);
+                case "REGEN": return GetHealthRegenCost(level);
+                case "DEFENSE": return GetDefensePercentCost(level);
+                case "CASHBONUS": return GetCashBonusCost(level);
+                case "CASHPERWAVE": return GetCashPerWaveCost(level);
+                default: return DefaultCostBase + level * DefaultCostPerLevel;
+            }
+        }
+
+        #endregion
     }
 }

@@ -13,10 +13,19 @@ namespace TheTower.UI
     /// </summary>
     public class LobbyUI : MonoBehaviour
     {
+        #region Serialized
+
         [Header("Optional: Battle scene name")]
         [SerializeField] string battleSceneName = "Battle";
 
-        // 씬에 배치된 UI 참조 (이름으로 찾거나 Inspector 할당)
+        [Header("워크샵 행 프리팹 (선택)")]
+        [Tooltip("지정 시 워크샵 탭의 각 항목을 이 프리팹으로 생성. 구조: Name, Buy(Text/Value/Cost)")]
+        [SerializeField] GameObject workshopRowPrefab;
+
+        #endregion
+
+        #region UI References
+
         Text coinsText;
         Text gemsText;
         Text powerStonesText;
@@ -29,13 +38,35 @@ namespace TheTower.UI
         Button tierNextButton;
         Button settingsButton;
 
+        // 화면 전환: Main 하위 Center(홈) / WorkshopPanel(워크샵)
+        Transform mainTransform;
+        GameObject centerPanel;
+        GameObject workshopPanel;
+        Text workshopTitleText;
+        Transform workshopContentGrid;
+        Button[] workshopCategoryTabs;
+        int currentWorkshopTab;
+
+        #endregion
+
+        #region Constants
+
         static readonly Color DarkBg = new Color(0.15f, 0.12f, 0.25f);
         static readonly Color PanelBg = new Color(0.2f, 0.16f, 0.35f, 0.95f);
         static readonly Color AccentBlue = new Color(0.4f, 0.6f, 1f);
         static readonly Color AccentPurple = new Color(0.6f, 0.35f, 0.9f);
 
+        /// <summary> 워크샵 탭별 제목 (공격/방어/유틸/카드) </summary>
+        static readonly string[] WorkshopTabTitles = { "공격 업그레이드", "방어 업그레이드", "유틸리티 업그레이드", "카드 업그레이드" };
+
+        #endregion
+
+        #region Lifecycle
+
         void Awake()
         {
+            GameData.Load();
+
             EnsureEventSystem();
 
             var root = transform.Find("LobbyRoot");
@@ -43,11 +74,15 @@ namespace TheTower.UI
                 BindExistingUI(root);
             else
                 BuildUI();
+
+            EnsureMainActiveAndShowHome();
         }
 
-        /// <summary>
-        /// 씬에 배치된 LobbyRoot 하위 UI를 찾아 바인딩합니다.
-        /// </summary>
+        #endregion
+
+        #region Binding
+
+        /// <summary> 씬에 배치된 LobbyRoot 하위 UI를 찾아 바인딩합니다. </summary>
         void BindExistingUI(Transform root)
         {
             // TopBar: Coins, Gems, PowerStones (이름으로 찾거나 자식 순서 0,1,2)
@@ -65,15 +100,19 @@ namespace TheTower.UI
                 }
             }
 
-            // Settings (LobbyRoot 직계)
-            var settingsGo = root.Find("Settings");
+            // Main 있으면 그 안에서 Center·WorkshopPanel 찾기, 없으면 root 직계에서 Center만
+            mainTransform = root.Find("Main");
+            var center = mainTransform != null ? mainTransform.Find("Center") : null;
+            if (center == null) center = root.Find("Center");
+            centerPanel = center != null ? center.gameObject : null;
+
+            var settingsGo = (mainTransform != null ? mainTransform.Find("Settings") : null) ?? root.Find("Settings");
             if (settingsGo != null)
             {
                 settingsButton = settingsGo.GetComponent<Button>();
                 if (settingsButton != null) settingsButton.onClick.AddListener(OnSettings);
             }
 
-            var center = root.Find("Center");
             if (center != null)
             {
                 // CoinBonusPanel 안의 값 텍스트 (Value 또는 두 번째 Text)
@@ -125,20 +164,73 @@ namespace TheTower.UI
                 }
             }
 
+            // WorkshopPanel: 씬에 있으면 사용 (LobbyRoot 직계 또는 Main 하위), 없으면 나중에 EnsureWorkshopPanel에서만 생성
+            var wp = root.Find("WorkshopPanel") ?? mainTransform?.Find("WorkshopPanel");
+            workshopPanel = wp != null ? wp.gameObject : null;
+            if (workshopPanel != null)
+            {
+                workshopPanel.SetActive(false);
+                workshopTitleText = GetText(workshopPanel.transform, "Title");
+                // Content: ScrollRect > Viewport > Content 또는 패널 직계 Content
+                var scrollRect = workshopPanel.transform.Find("ScrollRect");
+                var viewport = scrollRect != null ? scrollRect.Find("Viewport") : null;
+                workshopContentGrid = (viewport != null ? viewport.Find("Content") : null) ?? workshopPanel.transform.Find("Content");
+                var tabsRow = workshopPanel.transform.Find("CategoryTabs");
+                if (tabsRow != null)
+                {
+                    var tabBtns = tabsRow.GetComponentsInChildren<Button>(true);
+                    workshopCategoryTabs = tabBtns;
+                    for (int i = 0; i < tabBtns.Length && i < 4; i++)
+                    {
+                        int idx = i;
+                        tabBtns[i].onClick.AddListener(() => OnWorkshopCategoryTab(idx));
+                    }
+                }
+            }
+
+            // BottomNav: 버튼 인덱스 0=홈, 1=워크샵, 2~4=추가 화면
+            var bottomNav = root.Find("BottomNav");
+            if (bottomNav != null)
+            {
+                var navBtns = bottomNav.GetComponentsInChildren<Button>(true);
+                for (int i = 0; i < navBtns.Length; i++)
+                {
+                    int idx = i;
+                    navBtns[i].onClick.AddListener(() => OnNavButton(idx));
+                }
+            }
+
             RefreshValues();
+            EnsureMainActiveAndShowHome();
         }
+
+        /// <summary> 로비 진입 시 Main을 켜고 홈(Center) 화면을 보여줍니다. </summary>
+        void EnsureMainActiveAndShowHome()
+        {
+            if (mainTransform != null && !mainTransform.gameObject.activeSelf)
+                mainTransform.gameObject.SetActive(true);
+            ShowHome();
+        }
+
+        #endregion
+
+        #region Helpers (Binding)
 
         static Text GetText(Transform parent, string name)
         {
-            var t = parent.Find(name);
+            var t = parent?.Find(name);
             return t != null ? t.GetComponent<Text>() : null;
         }
 
         static Button GetButton(Transform parent, string name)
         {
-            var t = parent.Find(name);
+            var t = parent?.Find(name);
             return t != null ? t.GetComponent<Button>() : null;
         }
+
+        #endregion
+
+        #region EventSystem & Build
 
         void EnsureEventSystem()
         {
@@ -205,8 +297,29 @@ namespace TheTower.UI
             var bg = CreatePanel(root.transform, "Background", DarkBg);
             SetFullRect(bg.GetComponent<RectTransform>(), 0, 0, 0, 0);
             BuildTopBar(root.transform);
-            BuildCenter(root.transform);
+
+            var mainGo = new GameObject("Main");
+            mainGo.transform.SetParent(root.transform, false);
+            var mainR = mainGo.AddComponent<RectTransform>();
+            mainR.anchorMin = Vector2.zero;
+            mainR.anchorMax = Vector2.one;
+            mainR.offsetMin = new Vector2(0, 100);
+            mainR.offsetMax = new Vector2(0, -100);
+            mainTransform = mainGo.transform;
+            BuildCenter(mainTransform);
+            centerPanel = mainTransform.Find("Center")?.gameObject;
+
             BuildBottomNav(root.transform);
+            var bottomNav = root.transform.Find("BottomNav");
+            if (bottomNav != null)
+            {
+                var navBtns = bottomNav.GetComponentsInChildren<Button>(true);
+                for (int i = 0; i < navBtns.Length; i++)
+                {
+                    int idx = i;
+                    navBtns[i].onClick.AddListener(() => OnNavButton(idx));
+                }
+            }
             RefreshValues();
         }
 
@@ -331,6 +444,10 @@ namespace TheTower.UI
             CreateNavButton(nav.transform, "🛒", PanelBg);
         }
 
+        #endregion
+
+        #region Layout Helpers
+
         static void SetRect(RectTransform r, float ax, float ay, float px, float py, float w, float h)
         {
             r.anchorMin = new Vector2(ax, ay);
@@ -352,12 +469,24 @@ namespace TheTower.UI
             return go;
         }
 
+        #endregion
+
+        #region Event Handlers
+
         void OnBattle()
         {
-            if (!string.IsNullOrEmpty(battleSceneName) && Application.CanStreamedLevelBeLoaded(battleSceneName))
-                SceneManager.LoadScene(battleSceneName);
-            else
+            if (string.IsNullOrEmpty(battleSceneName) || !Application.CanStreamedLevelBeLoaded(battleSceneName))
+            {
                 Debug.Log("[Lobby] Battle scene not found. Create a scene named '" + battleSceneName + "' and add it to Build Settings.");
+                return;
+            }
+            GameData.Save();
+            SceneManager.LoadScene(battleSceneName);
+        }
+
+        void OnApplicationQuit()
+        {
+            GameData.Save();
         }
 
         void OnTierPrev()
@@ -376,6 +505,242 @@ namespace TheTower.UI
         {
             Debug.Log("[Lobby] Settings pressed.");
         }
+
+        void OnNavButton(int index)
+        {
+            if (index == 0) ShowHome();
+            else if (index == 1) ShowWorkshop();
+            else ShowHome();
+        }
+
+        void ShowHome()
+        {
+            if (centerPanel != null) centerPanel.SetActive(true);
+            if (workshopPanel != null) workshopPanel.SetActive(false);
+        }
+
+        void ShowWorkshop()
+        {
+            if (centerPanel != null) centerPanel.SetActive(false);
+            EnsureWorkshopPanel();
+            if (workshopPanel == null) return;
+
+            workshopPanel.SetActive(true);
+            // 유저의 현재 업그레이드 레벨(GameData)을 반영해 탭별 아이템 생성 및 제목 설정
+            RefreshWorkshopTab(currentWorkshopTab);
+        }
+
+        #endregion
+
+        #region Workshop
+
+        void EnsureWorkshopPanel()
+        {
+            if (workshopPanel != null || mainTransform == null) return;
+
+            workshopPanel = new GameObject("WorkshopPanel");
+            workshopPanel.transform.SetParent(mainTransform, false);
+            var panelRect = workshopPanel.AddComponent<RectTransform>();
+            panelRect.anchorMin = Vector2.zero;
+            panelRect.anchorMax = Vector2.one;
+            panelRect.offsetMin = Vector2.zero;
+            panelRect.offsetMax = Vector2.zero;
+            var panelImg = workshopPanel.AddComponent<Image>();
+            panelImg.color = DarkBg;
+
+            var titleGo = CreateLabel(workshopPanel.transform, "Title", "공격 업그레이드", 36);
+            var titleR = titleGo.GetComponent<RectTransform>();
+            titleR.anchorMin = new Vector2(0, 1);
+            titleR.anchorMax = new Vector2(1, 1);
+            titleR.pivot = new Vector2(0.5f, 1);
+            titleR.anchoredPosition = new Vector2(0, -20);
+            titleR.sizeDelta = new Vector2(0, 60);
+            titleGo.alignment = TextAnchor.MiddleCenter;
+            workshopTitleText = titleGo;
+
+            var contentGo = new GameObject("Content");
+            contentGo.transform.SetParent(workshopPanel.transform, false);
+            var contentR = contentGo.AddComponent<RectTransform>();
+            contentR.anchorMin = new Vector2(0, 0);
+            contentR.anchorMax = new Vector2(1, 1);
+            contentR.offsetMin = new Vector2(20, 120);
+            contentR.offsetMax = new Vector2(-20, 100);
+            var grid = contentGo.AddComponent<GridLayoutGroup>();
+            grid.cellSize = new Vector2(320, 56);
+            grid.spacing = new Vector2(12, 8);
+            grid.startCorner = GridLayoutGroup.Corner.UpperLeft;
+            grid.startAxis = GridLayoutGroup.Axis.Horizontal;
+            grid.childAlignment = TextAnchor.UpperLeft;
+            grid.constraint = GridLayoutGroup.Constraint.Flexible;
+            workshopContentGrid = contentGo.transform;
+
+            var tabsRow = new GameObject("CategoryTabs");
+            tabsRow.transform.SetParent(workshopPanel.transform, false);
+            var tabsR = tabsRow.AddComponent<RectTransform>();
+            tabsR.anchorMin = new Vector2(0, 0);
+            tabsR.anchorMax = new Vector2(1, 0);
+            tabsR.pivot = new Vector2(0.5f, 0);
+            tabsR.anchoredPosition = new Vector2(0, 10);
+            tabsR.sizeDelta = new Vector2(0, 56);
+            var h = tabsRow.AddComponent<HorizontalLayoutGroup>();
+            h.childAlignment = TextAnchor.MiddleCenter;
+            h.spacing = 16;
+            h.padding = new RectOffset(20, 0, 0, 0);
+            h.childControlWidth = h.childControlHeight = true;
+            h.childForceExpandWidth = h.childForceExpandHeight = false;
+
+            string[] tabLabels = { "공격", "방어", "유틸", "카드" };
+            workshopCategoryTabs = new Button[4];
+            for (int i = 0; i < 4; i++)
+            {
+                var btnGo = CreateButton(tabsRow.transform, "Tab_" + i, tabLabels[i], 26);
+                btnGo.GetComponent<RectTransform>().sizeDelta = new Vector2(120, 44);
+                var btn = btnGo.GetComponent<Button>();
+                var c = btn.colors;
+                c.normalColor = PanelBg;
+                c.highlightedColor = AccentBlue * 0.8f;
+                btn.colors = c;
+                workshopCategoryTabs[i] = btn;
+                int idx = i;
+                btn.onClick.AddListener(() => OnWorkshopCategoryTab(idx));
+            }
+
+            workshopPanel.SetActive(false);
+        }
+
+        void OnWorkshopCategoryTab(int index)
+        {
+            currentWorkshopTab = Mathf.Clamp(index, 0, 3);
+            RefreshWorkshopTab(currentWorkshopTab);
+        }
+
+        void RefreshWorkshopTab(int tabIndex)
+        {
+            int clampedIndex = Mathf.Clamp(tabIndex, 0, WorkshopTabTitles.Length - 1);
+            if (workshopTitleText != null)
+                workshopTitleText.text = WorkshopTabTitles[clampedIndex];
+
+            if (workshopContentGrid == null) return;
+            for (int i = workshopContentGrid.childCount - 1; i >= 0; i--)
+                Destroy(workshopContentGrid.GetChild(i).gameObject);
+
+            var tab = (UpgradeItemInfo.Tab)clampedIndex;
+            foreach (var entry in UpgradeItemInfo.GetByTab(tab))
+            {
+                int level = GameData.GetWorkshopLevel(entry.Id);
+                int cost = UpgradeConfig.GetCostForUpgrade(entry.Id, level);
+                string valueStr = level.ToString();
+                if (level >= entry.MaxLevel) valueStr = "Max";
+                string costStr = level >= entry.MaxLevel ? "최대" : "C " + FormatBigNumber(cost);
+                GameObject row = workshopRowPrefab != null
+                    ? CreateWorkshopRowFromPrefab(entry.DisplayName, valueStr, costStr, entry.Id, cost, entry.MaxLevel)
+                    : CreateWorkshopRow(entry.DisplayName, valueStr, costStr, entry.Id, cost, entry.MaxLevel);
+                row.transform.SetParent(workshopContentGrid, false);
+            }
+
+            RefreshValues();
+        }
+
+        GameObject CreateWorkshopRow(string displayName, string valueStr, string costStr, string upgradeId, int cost, int maxLevel)
+        {
+            int currentLevel = GameData.GetWorkshopLevel(upgradeId);
+            var row = new GameObject("WorkshopRow");
+            row.AddComponent<RectTransform>();
+            var img = row.AddComponent<Image>();
+            img.color = PanelBg;
+
+            // WorkshopRow 직계: Name
+            var nameText = CreateLabel(row.transform, "Name", displayName, 22);
+            SetRect(nameText.GetComponent<RectTransform>(), 0, 0.5f, 10, 0, 140, 24);
+
+            // Buy 컨테이너 (Text, Value, Cost 자식)
+            var buyGo = new GameObject("Buy");
+            buyGo.transform.SetParent(row.transform, false);
+            var buyRect = buyGo.AddComponent<RectTransform>();
+            buyRect.anchorMin = new Vector2(0.35f, 0);
+            buyRect.anchorMax = new Vector2(1f, 1f);
+            buyRect.offsetMin = new Vector2(8, 4);
+            buyRect.offsetMax = new Vector2(-8, -4);
+            var buyImg = buyGo.AddComponent<Image>();
+            buyImg.color = PanelBg;
+            var buyBtn = buyGo.AddComponent<Button>();
+            buyBtn.interactable = currentLevel < maxLevel && GameData.Coins >= cost;
+            buyBtn.onClick.AddListener(() =>
+            {
+                if (GameData.TryBuyWorkshopLevel(upgradeId, cost, maxLevel))
+                {
+                    RefreshValues();
+                    RefreshWorkshopTab(currentWorkshopTab);
+                }
+            });
+
+            var buyLabel = CreateLabel(buyGo.transform, "Text", currentLevel >= maxLevel ? "최대" : "C", 18);
+            SetRect(buyLabel.GetComponent<RectTransform>(), 0, 0.5f, 8, 0, 36, 22);
+            var valueText = CreateLabel(buyGo.transform, "Value", valueStr, 20);
+            SetRect(valueText.GetComponent<RectTransform>(), 0.25f, 0.5f, 0, 0, 80, 22);
+            var costText = CreateLabel(buyGo.transform, "Cost", costStr, 18);
+            SetRect(costText.GetComponent<RectTransform>(), 0.6f, 0.5f, 0, 0, 90, 20);
+
+            return row;
+        }
+
+        /// <summary> WorkshopRow 프리팹 인스턴스 생성. Name, Buy(Text/Value/Cost) 설정 및 구매 버튼 연결. </summary>
+        GameObject CreateWorkshopRowFromPrefab(string displayName, string valueStr, string costStr, string upgradeId, int cost, int maxLevel)
+        {
+            int currentLevel = GameData.GetWorkshopLevel(upgradeId);
+            var row = Instantiate(workshopRowPrefab);
+            row.name = "WorkshopRow";
+
+            var nameT = row.transform.Find("Name");
+            if (nameT != null)
+            {
+                var t = nameT.GetComponent<Text>();
+                if (t != null) t.text = displayName;
+            }
+
+            var buyT = row.transform.Find("Buy");
+            if (buyT != null)
+            {
+                var buyBtn = buyT.GetComponent<Button>();
+                if (buyBtn != null)
+                {
+                    buyBtn.interactable = currentLevel < maxLevel && GameData.Coins >= cost;
+                    buyBtn.onClick.AddListener(() =>
+                    {
+                        if (GameData.TryBuyWorkshopLevel(upgradeId, cost, maxLevel))
+                        {
+                            RefreshValues();
+                            RefreshWorkshopTab(currentWorkshopTab);
+                        }
+                    });
+                }
+
+                var textT = buyT.Find("Text");
+                if (textT != null)
+                {
+                    var t = textT.GetComponent<Text>();
+                    if (t != null) t.text = currentLevel >= maxLevel ? "최대" : "C";
+                }
+                var valueT = buyT.Find("Value");
+                if (valueT != null)
+                {
+                    var t = valueT.GetComponent<Text>();
+                    if (t != null) t.text = valueStr;
+                }
+                var costT = buyT.Find("Cost");
+                if (costT != null)
+                {
+                    var t = costT.GetComponent<Text>();
+                    if (t != null) t.text = costStr;
+                }
+            }
+
+            return row;
+        }
+
+        #endregion
+
+        #region Refresh & Formatting
 
         void RefreshValues()
         {
@@ -440,6 +805,8 @@ namespace TheTower.UI
             text.alignment = TextAnchor.MiddleCenter;
             return go;
         }
+
+        #endregion
 
         static void SetFullRect(RectTransform r, float left, float bottom, float right, float top)
         {

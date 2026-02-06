@@ -48,6 +48,10 @@ namespace TheTower.Game
         /// <summary> 월드 전체 스케일 (1/5) </summary>
         public const float WorldScale = 0.2f;
 
+        private const double BaseDamage = 10;
+        private const double BaseMaxHp = 100;
+        private const double BaseRegenPerSec = 1;
+
         /// <summary> 타워(캐릭터) 기본 소환 위치 (Y축 0.5 올림) </summary>
         public static readonly Vector3 TowerSpawnPosition = new Vector3(0f, 0.5f, 0f);
 
@@ -60,32 +64,60 @@ namespace TheTower.Game
         /// <summary> 자료 기반 발사 주기(초). TowerAttacksPerSecond 역수. </summary>
         public float TowerAttackInterval => 1f / Mathf.Max(0.05f, TowerAttacksPerSecond);
 
+        /// <summary> 배틀 시작 시 호출. 로비(워크샵) 레벨을 반영한 초기 상태로 설정. </summary>
         public static void ResetForNewRun()
         {
+            int d = GameData.WorkshopDamage;
+            int a = GameData.WorkshopAttackSpeed;
+            int h = GameData.WorkshopHealth;
+            int r = GameData.WorkshopHealthRegen;
+            int def = GameData.WorkshopDefensePercent;
+            int cb = GameData.WorkshopCashBonus;
+            int cw = GameData.WorkshopCashPerWave;
+
             Instance = new BattleState
             {
                 Cash = 0,
                 Wave = 1,
-                TowerHealth = 100,
-                TowerMaxHealth = 100,
-                Damage = 10,
-                HealthRegenPerSec = 1,
                 GameSpeed = 1f,
-                UpgradeDamage = 0,
-                UpgradeAttackSpeed = 0,
-                UpgradeCriticalChance = 0,
-                UpgradeRange = 0,
-                UpgradeHealth = 0,
-                UpgradeHealthRegen = 0,
-                UpgradeDefensePercent = 0,
-                UpgradeCashBonus = 0,
-                UpgradeCashPerWave = 0
+                UpgradeDamage = d,
+                UpgradeAttackSpeed = a,
+                UpgradeCriticalChance = GameData.WorkshopCriticalChance,
+                UpgradeRange = GameData.WorkshopRange,
+                UpgradeHealth = h,
+                UpgradeHealthRegen = r,
+                UpgradeDefensePercent = def,
+                UpgradeCashBonus = cb,
+                UpgradeCashPerWave = cw,
+                Damage = BaseDamage + d * 2,
+                TowerMaxHealth = BaseMaxHp + h * 10,
+                HealthRegenPerSec = BaseRegenPerSec + r * 0.5,
+                TowerHealth = BaseMaxHp + h * 10
             };
         }
 
         public static void EnsureExists()
         {
             if (Instance == null) ResetForNewRun();
+        }
+
+        /// <summary> 업그레이드 ID별 현재 레벨. UpgradeItemInfo.Id와 일치. 배틀 UI·비용 표시용. </summary>
+        public int GetUpgradeLevel(string upgradeId)
+        {
+            if (string.IsNullOrEmpty(upgradeId)) return 0;
+            switch (upgradeId.ToUpperInvariant())
+            {
+                case "DAMAGE": return UpgradeDamage;
+                case "ATTACKSPEED": return UpgradeAttackSpeed;
+                case "CRITICALCHANCE": return UpgradeCriticalChance;
+                case "RANGE": return UpgradeRange;
+                case "HEALTH": return UpgradeHealth;
+                case "REGEN": return UpgradeHealthRegen;
+                case "DEFENSE": return UpgradeDefensePercent;
+                case "CASHBONUS": return UpgradeCashBonus;
+                case "CASHPERWAVE": return UpgradeCashPerWave;
+                default: return 0;
+            }
         }
     }
 }

@@ -1,0 +1,72 @@
+---
+description: Unity C# 코딩 표준 — 시니어급 가독성·유지보수·안정성
+globs: Assets/Scripts/**/*.cs
+alwaysApply: false
+---
+
+# Unity C# 스크립트 표준
+
+이 프로젝트의 모든 C# 스크립트는 아래 규칙을 따릅니다. 이슈 없이 동작하고, 시니어 개발자가 작성한 것처럼 읽히도록 유지합니다.
+
+## 네이밍
+
+- **클래스·메서드·public 프로퍼티**: PascalCase
+- **private 필드**: camelCase (SerializeField는 Inspector 표기용으로 PascalCase 허용)
+- **상수·readonly**: PascalCase 또는 UPPER_SNAKE (프로젝트 일관성 유지)
+- **지역 변수·매개변수**: camelCase
+- **의미 있는 이름 사용**: `i`, `tmp` 대신 `index`, `cachedTransform` 등
+
+## null·안전성
+
+- **모든 참조 접근 전 null 체크**: `if (text != null) text.text = value;`
+- **optional 패턴**: `GetComponent<T>()` 후 null 체크, early return으로 분기 단순화
+- **nullable 참조 타입** 사용 시 `!` 최소화, 대신 null 체크 후 사용
+
+```csharp
+// ✅ GOOD
+var btn = transform.Find("Button")?.GetComponent<Button>();
+if (btn != null) btn.onClick.AddListener(OnClick);
+
+// ❌ BAD
+transform.Find("Button").GetComponent<Button>().onClick.AddListener(OnClick);
+```
+
+## 매직 넘버 제거
+
+- 반복되거나 의미가 중요한 숫자는 **const** 또는 **static readonly**로 이름 부여
+- UI 크기·색상·레이아웃 오프셋 등은 클래스 상단 또는 지역 상수로 정의
+
+```csharp
+// ✅ GOOD
+const float BaseDamage = 10f;
+const int DefaultFontSize = 22;
+
+// ❌ BAD
+Damage = 10 + d * 2;
+var label = CreateLabel(..., 22);
+```
+
+## 구조화
+
+- **#region** 사용: Binding, Build, Event Handlers, Helpers 등 논리 블록 구분 (파일 200줄 이상 시 권장)
+- **단일 책임**: 한 메서드는 한 가지 일만. 길어지면 private 메서드로 분리
+- **public API 최소화**: 외부에서 쓸 것만 public, 나머지는 internal/private
+
+## XML 문서
+
+- **public·internal 클래스/메서드/프로퍼티**: `<summary>` 한 줄 이상 권장
+- **매개변수·반환값**이 불명확하면 `<param>`, `<returns>` 사용
+
+## Unity 특수 규칙
+
+- **Find 계열**: `Transform.Find`는 인스턴스 메서드. `GameObject.Find`는 static(씬 전체). GameObject에서 자식 찾을 때는 `gameObject.transform.Find(...)` 사용
+- **Instantiate/Destroy**: 런타임 생성/삭제는 null 체크 후 사용. Destroy 후 참조는 null로 두지 말고 사용 중단
+- **SerializeField**: 필요한 것만 노출. 기본값은 코드에서 설정하고, Tooltip으로 용도 설명
+
+## 에러 방지
+
+- **인덱스 접근 전 범위 검사**: `if (index >= 0 && index < array.Length)`
+- **문자열**: `string.IsNullOrEmpty(s)` 체크 후 사용
+- **나눗셈**: 0 나누기 방지 (`Mathf.Max(0.01f, value)` 등)
+
+이 규칙을 적용한 코드는 리팩터 시에도 동일 수준을 유지합니다.
